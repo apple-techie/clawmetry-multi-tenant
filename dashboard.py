@@ -4124,9 +4124,8 @@ function formatBrainTime(isoStr) {
     var now = new Date();
     var sameDay = d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
     var time = d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    if (sameDay) return time;
-    var date = d.toLocaleDateString('en-GB', {day:'numeric',month:'short'});
-    return date + ' ' + time;
+    var prefix = sameDay ? 'Today' : d.toLocaleDateString('en-GB', {day:'numeric',month:'short'});
+    return '<span style="opacity:0.45;font-size:10px;margin-right:3px;">' + prefix + '</span>' + time;
   } catch(e) { return isoStr || ''; }
 }
 
@@ -8338,9 +8337,8 @@ function formatBrainTime(isoStr) {
     var now = new Date();
     var sameDay = d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
     var time = d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    if (sameDay) return time;
-    var date = d.toLocaleDateString('en-GB', {day:'numeric',month:'short'});
-    return date + ' ' + time;
+    var prefix = sameDay ? 'Today' : d.toLocaleDateString('en-GB', {day:'numeric',month:'short'});
+    return '<span style="opacity:0.45;font-size:10px;margin-right:3px;">' + prefix + '</span>' + time;
   } catch(e) { return isoStr || ''; }
 }
 

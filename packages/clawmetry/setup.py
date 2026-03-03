@@ -10,7 +10,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Vivek Chand",
-    author_email="vivek@openclaw.dev",
+    author_email="vivek@clawmetry.com",
     url="https://github.com/vivekchand/openclaw-dashboard",
     python_requires=">=3.8",
     install_requires=[
