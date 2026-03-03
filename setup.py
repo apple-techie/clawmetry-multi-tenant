@@ -15,7 +15,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Vivek Chand",
-    author_email="vivek@openclaw.dev",
+    author_email="vivek@clawmetry.com",
     url="https://github.com/vivekchand/clawmetry",
     py_modules=["dashboard"],
     packages=["clawmetry"],
