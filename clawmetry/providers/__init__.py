@@ -40,6 +40,12 @@ def init_providers(sessions_dir: str = "", log_dir: str = "", workspace: str = "
     from clawmetry.providers.local import LocalDataProvider
     register_provider("local", LocalDataProvider)
 
+    try:
+        from clawmetry.providers.turso import TursoDataProvider
+        register_provider("turso", TursoDataProvider)
+    except Exception as e:
+        logger.debug("Turso provider not available: %s", e)
+
     # Load 3rd-party providers via entry points
     try:
         import importlib.metadata

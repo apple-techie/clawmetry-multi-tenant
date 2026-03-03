@@ -8521,6 +8521,7 @@ function renderBrainChart(events) {
 }
 
 async function loadBrainPage(silent) {
+  if (window.CLOUD_MODE) return;
   try {
     var data = await fetchJsonWithTimeout('/api/brain-history', 8000);
     var events = (data.events || []).slice().sort(function(a,b){
@@ -9351,6 +9352,7 @@ async function loadLogs() {
 }
 
 async function loadMemory() {
+  if (window.CLOUD_MODE) return;
   var data = await fetch('/api/memory-files').then(r => r.json());
   var html = '';
   data.forEach(function(f) {
