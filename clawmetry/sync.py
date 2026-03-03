@@ -388,28 +388,37 @@ def sync_session_metadata(config: dict) -> int:
                 total_cost = 0.0
                 label = ""
 
+                # Read first 20 lines for metadata (model, start time, label)
+                # Read last 5 lines for updated_at — avoids scanning large files
                 with open(fpath, "r", errors="replace") as f:
-                    for raw in f:
-                        raw = raw.strip()
-                        if not raw:
-                            continue
-                        try:
-                            ev = json.loads(raw)
-                        except Exception:
-                            continue
-                        ts = ev.get("timestamp", "")
-                        if not started_at and ts:
-                            started_at = ts
-                        if ts:
-                            updated_at = ts
-                        etype = ev.get("type", "")
-                        if etype == "model_change" and ev.get("modelId"):
-                            model = ev["modelId"]
-                        elif etype == "session" and ev.get("label"):
-                            label = ev["label"]
-                        elif etype == "usage":
-                            total_tokens += ev.get("totalTokens", 0) or 0
-                            total_cost += float(ev.get("totalCost", 0.0) or 0.0)
+                    head_lines = [f.readline() for _ in range(20)]
+                try:
+                    fsize = fpath.stat().st_size
+                    with open(fpath, "rb") as f:
+                        f.seek(max(0, fsize - 4096))
+                        tail_raw = f.read().decode("utf-8", errors="replace")
+                    tail_lines = tail_raw.splitlines()[-10:]
+                except Exception:
+                    tail_lines = []
+
+                for raw in head_lines + tail_lines:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        ev = json.loads(raw)
+                    except Exception:
+                        continue
+                    ts = ev.get("timestamp", "")
+                    if not started_at and ts:
+                        started_at = ts
+                    if ts:
+                        updated_at = ts
+                    etype = ev.get("type", "")
+                    if etype == "model_change" and ev.get("modelId"):
+                        model = ev["modelId"]
+                    elif etype == "session" and ev.get("label"):
+                        label = ev["label"]
 
                 session_rows.append({
                     "session_id": sid,
