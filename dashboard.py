@@ -61,7 +61,7 @@ except ImportError:
     metrics_service_pb2 = None
     trace_service_pb2 = None
 
-__version__ = "0.11.31"
+__version__ = "0.11.32"
 
 # Extensions (Phase 2) — load plugins at import time; safe no-op if package not installed
 try:
@@ -8786,7 +8786,7 @@ async function loadSAActivity(sessionId) {
 
     var html = '';
     data.events.forEach(function(evt, i) {
-      var time = evt.ts ? new Date(evt.ts).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+      var _ets = evt.ts || evt.timestamp || evt._bts || ''; var time = _ets ? new Date(_ets).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
 
       if (evt.type === 'tool_call') {
         var color = evt.tool === 'exec' ? '#f0c040' : evt.tool.match(/Read|Write|Edit/) ? '#60a0ff' : evt.tool === 'web_search' ? '#c0a0ff' : evt.tool === 'browser' ? '#40a0b0' : '#50e080';
