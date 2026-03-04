@@ -459,11 +459,12 @@ def sync_memory(config: dict, state: dict, paths: dict) -> int:
     last_hashes: dict = state.setdefault("memory_hashes", {})
     synced = 0
 
-    # Collect memory files
+    # Collect all workspace memory files (same list as OSS dashboard)
     memory_files = []
-    mem_md = os.path.join(workspace, "MEMORY.md")
-    if os.path.isfile(mem_md):
-        memory_files.append(("MEMORY.md", mem_md))
+    for name in ['MEMORY.md', 'SOUL.md', 'IDENTITY.md', 'USER.md', 'AGENTS.md', 'TOOLS.md', 'HEARTBEAT.md']:
+        fpath = os.path.join(workspace, name)
+        if os.path.isfile(fpath):
+            memory_files.append((name, fpath))
     mem_dir = os.path.join(workspace, "memory")
     if os.path.isdir(mem_dir):
         for f in sorted(os.listdir(mem_dir)):
@@ -491,13 +492,22 @@ def sync_memory(config: dict, state: dict, paths: dict) -> int:
     if not changed_files:
         return 0
 
-    # Push memory_state (file list) + memory_content (changed files)
-    events = [{"type": "memory_state", "session_id": "", "data": {"files": file_list}}]
-    for name, file_content in changed_files:
-        events.append({"type": "memory_content", "session_id": "", "data": {"path": name, "content": file_content[:100000]}})
-
+    # Push memory files as encrypted blob (like session events)
+    payload = {
+        "node_id": node_id,
+        "memory_state": {"files": file_list},
+        "memory_content": [{"path": name, "content": content[:100000]} for name, content in changed_files],
+    }
     try:
-        _post("/api/ingest", {"events": events, "node_id": node_id}, api_key)
+        if enc_key:
+            from clawmetry.sync import encrypt_payload
+            _post("/ingest/memory", {
+                "node_id": node_id,
+                "encrypted": True,
+                "blob": encrypt_payload(payload, enc_key),
+            }, api_key)
+        else:
+            _post("/ingest/memory", payload, api_key)
         synced = len(changed_files)
     except Exception as e:
         log.warning(f"Memory sync error: {e}")
