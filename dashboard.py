@@ -8953,7 +8953,7 @@ function renderLogs(elId, lines) {
   document.getElementById(elId).scrollTop = document.getElementById(elId).scrollHeight;
 }
 
-function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escHtml(s) { s=String(s||''); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 async function viewFile(path) {
   var viewer = document.getElementById('file-viewer');
