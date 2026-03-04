@@ -19827,6 +19827,16 @@ def cmd_connect(args):
         state_file.unlink()
         print("  Cleared previous sync state")
 
+    # Stop existing sync daemon and clear state
+    try:
+        cmd_stop(type('Args', (), {})())
+    except SystemExit:
+        pass
+    import pathlib as _pl
+    _sf = _pl.Path.home() / '.clawmetry' / 'sync-state.json'
+    if _sf.exists():
+        _sf.unlink()
+        print('  Cleared previous sync state')
     _write_cloud_token(token)
     print()
     print(f"[ok] Connected! View your fleet at: https://app.clawmetry.com/fleet/?token={token}")
