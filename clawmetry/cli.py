@@ -558,11 +558,17 @@ def main() -> None:
     _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
     dashboard_main = _mod.main
 
-    # Python 3.14 on Windows: argparse's color detection calls file.fileno()
-    # on a closed file, raising ValueError. NO_COLOR disables this code path.
-    # https://github.com/python/cpython/issues/127321
+    # Windows: force UTF-8 stdout/stderr to avoid UnicodeEncodeError on CP1252
+    # terminals (box-drawing chars, emoji). Also disable argparse color (Python
+    # 3.14 calls file.fileno() on a closed file → ValueError).
     if sys.platform == "win32":
         os.environ.setdefault("NO_COLOR", "1")
+        os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
 
     parser = argparse.ArgumentParser(prog="clawmetry", add_help=False)
     sub = parser.add_subparsers(dest="cmd")

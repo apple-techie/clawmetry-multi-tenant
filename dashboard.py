@@ -61,7 +61,7 @@ except ImportError:
     metrics_service_pb2 = None
     trace_service_pb2 = None
 
-__version__ = "0.12.11"
+__version__ = "0.12.12"
 
 # Extensions (Phase 2) — load plugins at import time; safe no-op if package not installed
 try:
@@ -20319,20 +20319,18 @@ def cmd_uninstall(args):
 
 
 def _run_server(args):
-    import sys as _sys, os as _os
-    # Windows: fix stdout/stderr encoding and handle closed streams
+    import sys as _sys
+    # Windows: reconfigure stdout/stderr to UTF-8 so box-drawing chars and
+    # emoji don't crash with UnicodeEncodeError on CP1252 terminals.
+    # reconfigure() is Python 3.7+ and handles the buffer layer correctly.
     if _sys.platform == 'win32':
-        import io as _io
         for _attr in ('stdout', 'stderr'):
-            _s = getattr(_sys, _attr, None)
-            try:
-                if _s is not None:
-                    getattr(_sys, _attr).write('')
-                    # Re-wrap with UTF-8 to handle unicode chars (emoji etc)
-                    setattr(_sys, _attr, _io.TextIOWrapper(
-                        getattr(_sys, _attr).buffer, encoding='utf-8', errors='replace'))
-            except (ValueError, OSError, AttributeError):
-                setattr(_sys, _attr, open(_os.devnull, 'w'))
+            _stream = getattr(_sys, _attr, None)
+            if _stream is not None:
+                try:
+                    _stream.reconfigure(encoding='utf-8', errors='replace')
+                except (AttributeError, Exception):
+                    pass
     """Start the Flask server (foreground). Called by foreground mode and cmd_start on unsupported OS."""
     detect_config(args)
     _load_gw_config()
@@ -20438,10 +20436,13 @@ def _run_server(args):
     import os as _os_nudge
     _already_connected = bool(_os_nudge.environ.get('CLAWMETRY_API_KEY') or _os_nudge.environ.get('CLAWMETRY_NODE_ID'))
     if not _already_connected:
-        print("  ─" * 25)
+        _sep = "  -" if sys.platform == "win32" else "  \u2500"
+        print(_sep * 25)
         print()
-        print("  🌐  Access from anywhere:  clawmetry connect")
-        print("      🔒  E2E encrypted with your local key — decrypted in the dashboard on demand.")
+        _globe = "[web]" if sys.platform == "win32" else "🌐 "
+        _lock  = "[enc]" if sys.platform == "win32" else "🔒 "
+        print(f"  {_globe}  Access from anywhere:  clawmetry connect")
+        print(f"      {_lock}  E2E encrypted with your local key — decrypted in the dashboard on demand.")
         print("      Free 7-day trial · no credit card required.")
         print()
 
