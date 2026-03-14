@@ -57,7 +57,7 @@ jobs:
           gh release create "v${{ steps.bump.outputs.new }}" \
             --title "v${{ steps.bump.outputs.new }}" \
             --notes "Released via PR: ${{ github.event.pull_request.title }}" \
-            --latest
+            --latest || echo "Release tag already exists, skipping"
 
       - name: Open version bump PR
         uses: peter-evans/create-pull-request@v6
