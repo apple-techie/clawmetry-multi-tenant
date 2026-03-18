@@ -492,6 +492,9 @@ def _get_budget_status():
 
     with _metrics_lock:
         for entry in metrics_store['cost']:
+            # Filter by node_id if specified
+            if node_id and entry.get('node_id') != node_id:
+                continue
             ts = entry.get('timestamp', 0)
             usd = entry.get('usd', 0)
             if ts >= month_start:
@@ -889,6 +892,52 @@ def _get_dp_attrs(dp):
     return attrs
 
 
+def _extract_node_id(resource_attrs):
+    """Extract node_id from OTLP resource attributes.
+    
+    Priority order:
+    1. openclaw.node (explicit identifier)
+    2. service.name (if starts with 'openclaw')
+    3. service.instance.id
+    4. Fallback: 'default'
+    """
+    node_id = resource_attrs.get('openclaw.node', '')
+    if node_id:
+        return node_id
+    service_name = resource_attrs.get('service.name', '')
+    if service_name and service_name.lower().startswith('openclaw'):
+        return service_name
+    instance_id = resource_attrs.get('service.instance.id', '')
+    if instance_id:
+        return instance_id
+    return 'default'
+
+
+_openclaw_nodes_lock = threading.Lock()
+_openclaw_nodes = {}
+
+
+def _update_openclaw_node(node_id, ts=None):
+    """Update or register an OpenClaw node when metrics are received."""
+    if ts is None:
+        ts = time.time()
+    with _openclaw_nodes_lock:
+        if node_id not in _openclaw_nodes:
+            _openclaw_nodes[node_id] = {
+                'node_id': node_id,
+                'name': node_id,
+                'first_seen': ts,
+                'last_seen': ts,
+                'status': 'online',
+                'metrics_count': 0
+            }
+        else:
+            _openclaw_nodes[node_id]['last_seen'] = ts
+            _openclaw_nodes[node_id]['status'] = 'online'
+        _openclaw_nodes[node_id]['metrics_count'] = _openclaw_nodes[node_id].get('metrics_count', 0) + 1
+
+
+
 def _process_otlp_metrics(pb_data):
     """Decode OTLP metrics protobuf and store relevant data."""
     req = metrics_service_pb2.ExportMetricsServiceRequest()
@@ -899,6 +948,10 @@ def _process_otlp_metrics(pb_data):
         if resource_metrics.resource:
             for attr in resource_metrics.resource.attributes:
                 resource_attrs[attr.key] = _otel_attr_value(attr.value)
+
+        # Extract node_id for multi-OpenClaw support
+        node_id = _extract_node_id(resource_attrs)
+        _update_openclaw_node(node_id)
 
         for scope_metrics in resource_metrics.scope_metrics:
             for metric in scope_metrics.metrics:
@@ -916,6 +969,7 @@ def _process_otlp_metrics(pb_data):
                             'model': attrs.get('model', resource_attrs.get('model', '')),
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'provider': attrs.get('provider', resource_attrs.get('provider', '')),
+                            'node_id': node_id,
                         })
                 elif name == 'openclaw.cost.usd':
                     for dp in _get_data_points(metric):
@@ -926,6 +980,7 @@ def _process_otlp_metrics(pb_data):
                             'model': attrs.get('model', resource_attrs.get('model', '')),
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'provider': attrs.get('provider', resource_attrs.get('provider', '')),
+                            'node_id': node_id,
                         })
                 elif name == 'openclaw.run.duration_ms':
                     for dp in _get_data_points(metric):
@@ -935,6 +990,7 @@ def _process_otlp_metrics(pb_data):
                             'duration_ms': _get_dp_value(dp),
                             'model': attrs.get('model', resource_attrs.get('model', '')),
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
+                            'node_id': node_id,
                         })
                 elif name == 'openclaw.context.tokens':
                     for dp in _get_data_points(metric):
@@ -947,6 +1003,7 @@ def _process_otlp_metrics(pb_data):
                             'model': attrs.get('model', resource_attrs.get('model', '')),
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'provider': attrs.get('provider', resource_attrs.get('provider', '')),
+                            'node_id': node_id,
                         })
                 elif name in ('openclaw.message.processed', 'openclaw.message.queued', 'openclaw.message.duration_ms'):
                     for dp in _get_data_points(metric):
@@ -957,6 +1014,7 @@ def _process_otlp_metrics(pb_data):
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'outcome': outcome,
                             'duration_ms': _get_dp_value(dp) if 'duration' in name else 0,
+                            'node_id': node_id,
                         })
                 elif name in ('openclaw.webhook.received', 'openclaw.webhook.error', 'openclaw.webhook.duration_ms'):
                     for dp in _get_data_points(metric):
@@ -966,6 +1024,7 @@ def _process_otlp_metrics(pb_data):
                             'timestamp': ts,
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'type': wtype,
+                            'node_id': node_id,
                         })
 
 
@@ -979,6 +1038,10 @@ def _process_otlp_traces(pb_data):
         if resource_spans.resource:
             for attr in resource_spans.resource.attributes:
                 resource_attrs[attr.key] = _otel_attr_value(attr.value)
+
+        # Extract node_id for multi-OpenClaw support
+        node_id = _extract_node_id(resource_attrs)
+        _update_openclaw_node(node_id)
 
         for scope_spans in resource_spans.scope_spans:
             for span in scope_spans.spans:
@@ -997,6 +1060,7 @@ def _process_otlp_traces(pb_data):
                         'duration_ms': duration_ms,
                         'model': attrs.get('model', resource_attrs.get('model', '')),
                         'channel': attrs.get('channel', resource_attrs.get('channel', '')),
+                        'node_id': node_id,
                     })
                 elif 'message' in span_name:
                     _add_metric('messages', {
@@ -1004,11 +1068,16 @@ def _process_otlp_traces(pb_data):
                         'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                         'outcome': 'processed',
                         'duration_ms': duration_ms,
+                        'node_id': node_id,
                     })
 
 
-def _get_otel_usage_data():
-    """Aggregate OTLP metrics into usage data for the Usage tab."""
+def _get_otel_usage_data(node_id=None):
+    """Aggregate OTLP metrics into usage data for the Usage tab.
+    
+    Args:
+        node_id: Optional node_id to filter metrics by. If None, returns all metrics.
+    """
     today = datetime.now()
     today_start = today.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     week_start = (today - timedelta(days=today.weekday())).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
@@ -1020,6 +1089,9 @@ def _get_otel_usage_data():
 
     with _metrics_lock:
         for entry in metrics_store['tokens']:
+            # Filter by node_id if specified
+            if node_id and entry.get('node_id') != node_id:
+                continue
             ts = entry.get('timestamp', 0)
             day = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
             total = entry.get('total', 0)
@@ -1028,6 +1100,9 @@ def _get_otel_usage_data():
             model_usage[model] = model_usage.get(model, 0) + total
 
         for entry in metrics_store['cost']:
+            # Filter by node_id if specified
+            if node_id and entry.get('node_id') != node_id:
+                continue
             ts = entry.get('timestamp', 0)
             day = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
             daily_cost[day] = daily_cost.get(day, 0) + entry.get('usd', 0)
@@ -1548,6 +1623,27 @@ DASHBOARD_HTML = r"""
   .theme-toggle { background: var(--button-bg); border: none; border-radius: 8px; padding: 8px 12px; color: var(--text-tertiary); cursor: pointer; font-size: 16px; margin-left: 12px; transition: all 0.15s; box-shadow: var(--card-shadow); }
   .theme-toggle:hover { background: var(--button-hover); color: var(--text-secondary); }
   .theme-toggle:active { transform: scale(0.98); }
+  
+  /* === Node Selector === */
+  .node-selector { display: flex; align-items: center; gap: 8px; margin-left: 12px; }
+  .node-selector select {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    padding: 6px 12px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    outline: none;
+    min-width: 140px;
+    transition: all 0.2s;
+  }
+  .node-selector select:hover { border-color: var(--text-accent); }
+  .node-selector select:focus { border-color: var(--text-accent); box-shadow: 0 0 0 2px rgba(15, 111, 255, 0.15); }
+  .node-indicator { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+  .node-indicator.offline { background: #ef4444; }
+  .node-indicator.all { background: linear-gradient(135deg, #22c55e 50%, #667 50%); }
   
   /* === Zoom Controls === */
   .zoom-controls { display: flex; align-items: center; gap: 4px; margin-left: 12px; }
@@ -2554,6 +2650,12 @@ function clawmetryLogout(){
   <!-- <div class="theme-toggle" onclick="openBudgetModal()" title="Budget & Alerts" style="cursor:pointer;">&#128176;</div> -->
 
   <div class="theme-toggle" id="logout-btn" onclick="clawmetryLogout()" title="Logout" style="display:none;cursor:pointer;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></div>
+  <div class="node-selector" id="node-selector" style="display:none;">
+    <div class="node-indicator all" id="node-indicator"></div>
+    <select id="node-select" onchange="onNodeChange(this.value)" title="Filter by OpenClaw instance">
+      <option value="">All Nodes</option>
+    </select>
+  </div>
   <div class="zoom-controls">
     <button class="zoom-btn" onclick="zoomOut()" title="Zoom out (Ctrl/Cmd + -)">−</button>
     <span class="zoom-level" id="zoom-level" title="Current zoom level. Ctrl/Cmd + 0 to reset">100%</span>
@@ -3659,6 +3761,99 @@ async function testTelegram() {
   } catch(e) {
     statusEl.innerHTML = '<span style="color:var(--text-error);">Request failed</span>';
   }
+}
+
+// Node selector state
+let selectedNodeId = '';
+let openclawNodes = [];
+
+async function loadOpenclawNodes() {
+  try {
+    const resp = await fetch('/api/nodes/openclaw');
+    const data = await resp.json();
+    openclawNodes = data.nodes || [];
+    
+    const selector = document.getElementById('node-selector');
+    const select = document.getElementById('node-select');
+    
+    if (openclawNodes.length > 0) {
+      selector.style.display = 'flex';
+      
+      // Save current selection
+      const currentValue = select.value;
+      
+      // Rebuild options
+      select.innerHTML = '<option value="">All Nodes (' + openclawNodes.length + ')</option>';
+      openclawNodes.forEach(node => {
+        const opt = document.createElement('option');
+        opt.value = node.node_id;
+        const status = node.status === 'online' ? '🟢' : '🔴';
+        opt.textContent = status + ' ' + (node.name || node.node_id);
+        select.appendChild(opt);
+      });
+      
+      // Restore selection
+      if (currentValue) {
+        select.value = currentValue;
+      }
+      
+      updateNodeIndicator();
+    } else {
+      selector.style.display = 'none';
+    }
+  } catch (e) {
+    console.warn('Failed to load OpenClaw nodes:', e);
+  }
+}
+
+function onNodeChange(nodeId) {
+  selectedNodeId = nodeId;
+  updateNodeIndicator();
+  
+  // Store selection in localStorage
+  if (nodeId) {
+    localStorage.setItem('clawmetry_selected_node', nodeId);
+  } else {
+    localStorage.removeItem('clawmetry_selected_node');
+  }
+  
+  // Refresh current tab data
+  const activeTab = document.querySelector('.nav-tab.active');
+  if (activeTab) {
+    const tabName = activeTab.textContent.toLowerCase().trim();
+    refreshCurrentTab(tabName);
+  }
+}
+
+function updateNodeIndicator() {
+  const indicator = document.getElementById('node-indicator');
+  if (!selectedNodeId) {
+    indicator.className = 'node-indicator all';
+  } else {
+    const node = openclawNodes.find(n => n.node_id === selectedNodeId);
+    indicator.className = 'node-indicator' + (node && node.status === 'online' ? '' : ' offline');
+  }
+}
+
+function refreshCurrentTab(tabName) {
+  // Trigger data refresh based on active tab
+  if (tabName === 'overview' && typeof loadOverview === 'function') {
+    loadOverview();
+  } else if (tabName === 'tokens' && typeof loadUsageData === 'function') {
+    loadUsageData();
+  }
+}
+
+// Load saved node selection on startup
+function initNodeSelector() {
+  const saved = localStorage.getItem('clawmetry_selected_node');
+  if (saved) {
+    selectedNodeId = saved;
+  }
+  loadOpenclawNodes();
+  
+  // Refresh nodes every 30 seconds
+  setInterval(loadOpenclawNodes, 30000);
 }
 
 function switchTab(name) {
@@ -5002,6 +5197,9 @@ def _get_budget_status():
 
     with _metrics_lock:
         for entry in metrics_store['cost']:
+            # Filter by node_id if specified
+            if node_id and entry.get('node_id') != node_id:
+                continue
             ts = entry.get('timestamp', 0)
             usd = entry.get('usd', 0)
             if ts >= month_start:
@@ -5425,6 +5623,10 @@ def _process_otlp_metrics(pb_data):
             for attr in resource_metrics.resource.attributes:
                 resource_attrs[attr.key] = _otel_attr_value(attr.value)
 
+        # Extract node_id for multi-OpenClaw support
+        node_id = _extract_node_id(resource_attrs)
+        _update_openclaw_node(node_id)
+
         for scope_metrics in resource_metrics.scope_metrics:
             for metric in scope_metrics.metrics:
                 name = metric.name
@@ -5441,6 +5643,7 @@ def _process_otlp_metrics(pb_data):
                             'model': attrs.get('model', resource_attrs.get('model', '')),
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'provider': attrs.get('provider', resource_attrs.get('provider', '')),
+                            'node_id': node_id,
                         })
                 elif name == 'openclaw.cost.usd':
                     for dp in _get_data_points(metric):
@@ -5451,6 +5654,7 @@ def _process_otlp_metrics(pb_data):
                             'model': attrs.get('model', resource_attrs.get('model', '')),
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'provider': attrs.get('provider', resource_attrs.get('provider', '')),
+                            'node_id': node_id,
                         })
                 elif name == 'openclaw.run.duration_ms':
                     for dp in _get_data_points(metric):
@@ -5460,6 +5664,7 @@ def _process_otlp_metrics(pb_data):
                             'duration_ms': _get_dp_value(dp),
                             'model': attrs.get('model', resource_attrs.get('model', '')),
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
+                            'node_id': node_id,
                         })
                 elif name == 'openclaw.context.tokens':
                     for dp in _get_data_points(metric):
@@ -5472,6 +5677,7 @@ def _process_otlp_metrics(pb_data):
                             'model': attrs.get('model', resource_attrs.get('model', '')),
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'provider': attrs.get('provider', resource_attrs.get('provider', '')),
+                            'node_id': node_id,
                         })
                 elif name in ('openclaw.message.processed', 'openclaw.message.queued', 'openclaw.message.duration_ms'):
                     for dp in _get_data_points(metric):
@@ -5482,6 +5688,7 @@ def _process_otlp_metrics(pb_data):
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'outcome': outcome,
                             'duration_ms': _get_dp_value(dp) if 'duration' in name else 0,
+                            'node_id': node_id,
                         })
                 elif name in ('openclaw.webhook.received', 'openclaw.webhook.error', 'openclaw.webhook.duration_ms'):
                     for dp in _get_data_points(metric):
@@ -5491,6 +5698,7 @@ def _process_otlp_metrics(pb_data):
                             'timestamp': ts,
                             'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                             'type': wtype,
+                            'node_id': node_id,
                         })
 
 
@@ -5504,6 +5712,10 @@ def _process_otlp_traces(pb_data):
         if resource_spans.resource:
             for attr in resource_spans.resource.attributes:
                 resource_attrs[attr.key] = _otel_attr_value(attr.value)
+
+        # Extract node_id for multi-OpenClaw support
+        node_id = _extract_node_id(resource_attrs)
+        _update_openclaw_node(node_id)
 
         for scope_spans in resource_spans.scope_spans:
             for span in scope_spans.spans:
@@ -5522,6 +5734,7 @@ def _process_otlp_traces(pb_data):
                         'duration_ms': duration_ms,
                         'model': attrs.get('model', resource_attrs.get('model', '')),
                         'channel': attrs.get('channel', resource_attrs.get('channel', '')),
+                        'node_id': node_id,
                     })
                 elif 'message' in span_name:
                     _add_metric('messages', {
@@ -5529,11 +5742,16 @@ def _process_otlp_traces(pb_data):
                         'channel': attrs.get('channel', resource_attrs.get('channel', '')),
                         'outcome': 'processed',
                         'duration_ms': duration_ms,
+                        'node_id': node_id,
                     })
 
 
-def _get_otel_usage_data():
-    """Aggregate OTLP metrics into usage data for the Usage tab."""
+def _get_otel_usage_data(node_id=None):
+    """Aggregate OTLP metrics into usage data for the Usage tab.
+    
+    Args:
+        node_id: Optional node_id to filter metrics by. If None, returns all metrics.
+    """
     today = datetime.now()
     today_start = today.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     week_start = (today - timedelta(days=today.weekday())).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
@@ -5545,6 +5763,9 @@ def _get_otel_usage_data():
 
     with _metrics_lock:
         for entry in metrics_store['tokens']:
+            # Filter by node_id if specified
+            if node_id and entry.get('node_id') != node_id:
+                continue
             ts = entry.get('timestamp', 0)
             day = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
             total = entry.get('total', 0)
@@ -5553,6 +5774,9 @@ def _get_otel_usage_data():
             model_usage[model] = model_usage.get(model, 0) + total
 
         for entry in metrics_store['cost']:
+            # Filter by node_id if specified
+            if node_id and entry.get('node_id') != node_id:
+                continue
             ts = entry.get('timestamp', 0)
             day = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
             daily_cost[day] = daily_cost.get(day, 0) + entry.get('usd', 0)
@@ -6091,6 +6315,27 @@ DASHBOARD_HTML = r"""
   .theme-toggle { background: var(--button-bg); border: none; border-radius: 8px; padding: 8px 12px; color: var(--text-tertiary); cursor: pointer; font-size: 16px; margin-left: 12px; transition: all 0.15s; box-shadow: var(--card-shadow); }
   .theme-toggle:hover { background: var(--button-hover); color: var(--text-secondary); }
   .theme-toggle:active { transform: scale(0.98); }
+  
+  /* === Node Selector === */
+  .node-selector { display: flex; align-items: center; gap: 8px; margin-left: 12px; }
+  .node-selector select {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    padding: 6px 12px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    outline: none;
+    min-width: 140px;
+    transition: all 0.2s;
+  }
+  .node-selector select:hover { border-color: var(--text-accent); }
+  .node-selector select:focus { border-color: var(--text-accent); box-shadow: 0 0 0 2px rgba(15, 111, 255, 0.15); }
+  .node-indicator { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+  .node-indicator.offline { background: #ef4444; }
+  .node-indicator.all { background: linear-gradient(135deg, #22c55e 50%, #667 50%); }
   
   /* === Zoom Controls === */
   .zoom-controls { display: flex; align-items: center; gap: 4px; margin-left: 12px; }
@@ -7098,6 +7343,12 @@ function clawmetryLogout(){
   <!-- <div class="theme-toggle" onclick="openBudgetModal()" title="Budget & Alerts" style="cursor:pointer;">&#128176;</div> -->
 
   <div class="theme-toggle" id="logout-btn" onclick="clawmetryLogout()" title="Logout" style="display:none;cursor:pointer;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></div>
+  <div class="node-selector" id="node-selector" style="display:none;">
+    <div class="node-indicator all" id="node-indicator"></div>
+    <select id="node-select" onchange="onNodeChange(this.value)" title="Filter by OpenClaw instance">
+      <option value="">All Nodes</option>
+    </select>
+  </div>
   <div class="zoom-controls">
     <button class="zoom-btn" onclick="zoomOut()" title="Zoom out (Ctrl/Cmd + -)">−</button>
     <span class="zoom-level" id="zoom-level" title="Current zoom level. Ctrl/Cmd + 0 to reset">100%</span>
@@ -8275,6 +8526,99 @@ async function testTelegram() {
   } catch(e) {
     statusEl.innerHTML = '<span style="color:var(--text-error);">Request failed</span>';
   }
+}
+
+// Node selector state
+let selectedNodeId = '';
+let openclawNodes = [];
+
+async function loadOpenclawNodes() {
+  try {
+    const resp = await fetch('/api/nodes/openclaw');
+    const data = await resp.json();
+    openclawNodes = data.nodes || [];
+    
+    const selector = document.getElementById('node-selector');
+    const select = document.getElementById('node-select');
+    
+    if (openclawNodes.length > 0) {
+      selector.style.display = 'flex';
+      
+      // Save current selection
+      const currentValue = select.value;
+      
+      // Rebuild options
+      select.innerHTML = '<option value="">All Nodes (' + openclawNodes.length + ')</option>';
+      openclawNodes.forEach(node => {
+        const opt = document.createElement('option');
+        opt.value = node.node_id;
+        const status = node.status === 'online' ? '🟢' : '🔴';
+        opt.textContent = status + ' ' + (node.name || node.node_id);
+        select.appendChild(opt);
+      });
+      
+      // Restore selection
+      if (currentValue) {
+        select.value = currentValue;
+      }
+      
+      updateNodeIndicator();
+    } else {
+      selector.style.display = 'none';
+    }
+  } catch (e) {
+    console.warn('Failed to load OpenClaw nodes:', e);
+  }
+}
+
+function onNodeChange(nodeId) {
+  selectedNodeId = nodeId;
+  updateNodeIndicator();
+  
+  // Store selection in localStorage
+  if (nodeId) {
+    localStorage.setItem('clawmetry_selected_node', nodeId);
+  } else {
+    localStorage.removeItem('clawmetry_selected_node');
+  }
+  
+  // Refresh current tab data
+  const activeTab = document.querySelector('.nav-tab.active');
+  if (activeTab) {
+    const tabName = activeTab.textContent.toLowerCase().trim();
+    refreshCurrentTab(tabName);
+  }
+}
+
+function updateNodeIndicator() {
+  const indicator = document.getElementById('node-indicator');
+  if (!selectedNodeId) {
+    indicator.className = 'node-indicator all';
+  } else {
+    const node = openclawNodes.find(n => n.node_id === selectedNodeId);
+    indicator.className = 'node-indicator' + (node && node.status === 'online' ? '' : ' offline');
+  }
+}
+
+function refreshCurrentTab(tabName) {
+  // Trigger data refresh based on active tab
+  if (tabName === 'overview' && typeof loadOverview === 'function') {
+    loadOverview();
+  } else if (tabName === 'tokens' && typeof loadUsageData === 'function') {
+    loadUsageData();
+  }
+}
+
+// Load saved node selection on startup
+function initNodeSelector() {
+  const saved = localStorage.getItem('clawmetry_selected_node');
+  if (saved) {
+    selectedNodeId = saved;
+  }
+  loadOpenclawNodes();
+  
+  // Refresh nodes every 30 seconds
+  setInterval(loadOpenclawNodes, 30000);
 }
 
 function switchTab(name) {
@@ -11218,7 +11562,7 @@ function initFlow() {
   // Hide unconfigured channels in the flow SVG
   hideUnconfiguredChannels(document);
   
-  fetch('/api/overview').then(function(r){return r.json();}).then(async function(d) {
+  fetch('/api/overview' + (selectedNodeId ? '?node_id=' + encodeURIComponent(selectedNodeId) : '')).then(function(r){return r.json();}).then(async function(d) {
     if (!d.model || d.model === 'unknown') {
       var fm = await resolvePrimaryModelFallback();
       if (fm && fm !== 'unknown') d.model = fm;
@@ -11284,7 +11628,7 @@ function updateFlowStats() {
   var el3 = document.getElementById('flow-active-tools');
   if (el3) el3.textContent = names.length > 0 ? names.join(', ') : '\u2014';
   if (flowStats.events % 15 === 0) {
-    fetch('/api/overview').then(function(r){return r.json();}).then(function(d) {
+    fetch('/api/overview' + (selectedNodeId ? '?node_id=' + encodeURIComponent(selectedNodeId) : '')).then(function(r){return r.json();}).then(function(d) {
       var tok = document.getElementById('flow-tokens');
       if (tok) tok.textContent = (d.mainTokens / 1000).toFixed(0) + 'K';
     }).catch(function(){});
@@ -13746,6 +14090,8 @@ function _prefetchToolData() {
   });
 }
 document.addEventListener('DOMContentLoaded', function() {
+  initNodeSelector();
+  initNodeSelector();
   setTimeout(_prefetchToolData, 2000); // prefetch 2s after load
   setInterval(_prefetchToolData, 30000); // refresh cache every 30s
 });
@@ -14004,6 +14350,8 @@ async function bootDashboard() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+  initNodeSelector();
+  initNodeSelector();
   initTheme();
   initZoom();
   // Overview is the default tab
@@ -16564,11 +16912,21 @@ def api_otel_status():
     with _metrics_lock:
         for k in metrics_store:
             counts[k] = len(metrics_store[k])
+    
+    # Get node information
+    with _openclaw_nodes_lock:
+        nodes = list(_openclaw_nodes.values())
+    
     return jsonify({
         'available': _HAS_OTEL_PROTO,
         'hasData': _has_otel_data(),
         'lastReceived': _otel_last_received,
         'counts': counts,
+        'nodes': {
+            'total': len(nodes),
+            'online': sum(1 for n in nodes if n.get('status') == 'online'),
+            'ids': [n['node_id'] for n in nodes]
+        }
     })
 
 
@@ -16863,6 +17221,76 @@ def api_node_detail(node_id):
         'latest_metrics': latest,
         'history': history,
     })
+
+
+
+# ── OpenClaw Nodes API (Multi-Instance Support) ─────────────────────────
+
+@bp_fleet.route('/api/nodes/openclaw')
+def api_openclaw_nodes():
+    """List all OpenClaw instances that have sent metrics."""
+    with _openclaw_nodes_lock:
+        nodes = list(_openclaw_nodes.values())
+    
+    now = time.time()
+    for node in nodes:
+        if now - node.get('last_seen', 0) > 300:
+            node['status'] = 'offline'
+    
+    with _metrics_lock:
+        for node in nodes:
+            node_id = node['node_id']
+            today = datetime.now().date()
+            node['tokens_today'] = sum(
+                e.get('total', 0) for e in metrics_store['tokens']
+                if e.get('node_id') == node_id and 
+                   datetime.fromtimestamp(e.get('timestamp', 0)).date() == today
+            )
+            node['cost_today'] = sum(
+                e.get('usd', 0) for e in metrics_store['cost']
+                if e.get('node_id') == node_id and 
+                   datetime.fromtimestamp(e.get('timestamp', 0)).date() == today
+            )
+    
+    return jsonify({
+        'nodes': nodes,
+        'summary': {
+            'total': len(nodes),
+            'online': sum(1 for n in nodes if n['status'] == 'online'),
+            'offline': sum(1 for n in nodes if n['status'] == 'offline'),
+        }
+    })
+
+
+@bp_fleet.route('/api/nodes/openclaw/<node_id>')
+def api_openclaw_node_detail(node_id):
+    """Get detailed info for a single OpenClaw instance."""
+    with _openclaw_nodes_lock:
+        node = _openclaw_nodes.get(node_id)
+    
+    if not node:
+        return jsonify({'error': 'Node not found'}), 404
+    
+    with _metrics_lock:
+        node_metrics = {
+            'tokens': [e for e in metrics_store['tokens'] if e.get('node_id') == node_id][-100:],
+            'cost': [e for e in metrics_store['cost'] if e.get('node_id') == node_id][-100:],
+            'runs': [e for e in metrics_store['runs'] if e.get('node_id') == node_id][-100:],
+            'messages': [e for e in metrics_store['messages'] if e.get('node_id') == node_id][-100:],
+        }
+    
+    return jsonify({
+        'node': node,
+        'metrics': node_metrics
+    })
+
+
+@bp_fleet.route('/api/nodes/openclaw/ids')
+def api_openclaw_node_ids():
+    """Get list of all node_ids that have sent metrics."""
+    with _openclaw_nodes_lock:
+        node_ids = list(_openclaw_nodes.keys())
+    return jsonify({'node_ids': node_ids})
 
 
 # ── Budget & Alert API Routes ───────────────────────────────────────────
