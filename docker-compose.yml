@@ -1,0 +1,40 @@
+services:
+  # ═══════════════════════════════════════════════════════════════════════
+  # ClawMetry - Multi-Tenant Fork (apple-techie/clawmetry-multi-tenant)
+  # Supports multiple OpenClaw instances with node filtering
+  # ═══════════════════════════════════════════════════════════════════════
+  clawmetry:
+    image: python:3.12-slim
+    # container_name removed - let Docker Compose use project-prefixed name
+    ports:
+      - "8900:8900"
+    environment:
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
+      - GATEWAY_URL=${GATEWAY_URL:-}
+      - GATEWAY_TOKEN=${GATEWAY_TOKEN:-}
+    volumes:
+      - clawmetry-data:/root/.openclaw
+    command: |
+      bash -c "
+        apt-get update && apt-get install -y git procps && rm -rf /var/lib/apt/lists/* &&
+        pip install --no-cache-dir git+https://github.com/apple-techie/clawmetry-multi-tenant.git opentelemetry-proto protobuf &&
+        mkdir -p /root/.openclaw/agents/main/sessions /tmp/openclaw &&
+        echo '{\"meta\":{\"version\":\"1.0.0\"},\"models\":{\"default\":\"anthropic/claude-sonnet-4\"},\"agents\":{\"list\":[{\"id\":\"main\",\"default\":true}]},\"channels\":{}}' > /root/.openclaw/openclaw.json &&
+        clawmetry --host 0.0.0.0 --port 8900 --no-debug
+      "
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8900/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - clawmetry-network
+
+volumes:
+  clawmetry-data:
+
+networks:
+  clawmetry-network:
+    driver: bridge
