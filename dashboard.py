@@ -17455,14 +17455,72 @@ def api_alerts_active():
 @bp_history.route('/api/history/metrics')
 def api_history_metrics():
     """Query historical metrics. Params: metric, from, to, interval."""
-    if not _history_db:
-        return jsonify({'error': 'History not available', 'data': []}), 200
     metric = request.args.get('metric', 'tokens_in_total')
     from_ts = request.args.get('from', type=float, default=time.time() - 3600)
     to_ts = request.args.get('to', type=float, default=time.time())
     interval = request.args.get('interval', None)
-    data = _history_db.query_metrics(metric, from_ts, to_ts, interval)
-    return jsonify({'data': data, 'metric': metric})
+    node_id = request.args.get('node_id', None)
+    
+    # Use history DB if available
+    if _history_db:
+        data = _history_db.query_metrics(metric, from_ts, to_ts, interval)
+        return jsonify({'data': data, 'metric': metric})
+    
+    # Fallback: aggregate from OTLP metrics_store
+    with _metrics_lock:
+        if metric in ('tokens_in_total', 'tokens_out_total', 'tokens_total'):
+            entries = [e for e in metrics_store.get('tokens', [])
+                      if e.get('timestamp', 0) >= from_ts and e.get('timestamp', 0) <= to_ts
+                      and (not node_id or e.get('node_id') == node_id)]
+            # Aggregate by interval
+            buckets = {}
+            bucket_size = int(interval) if interval else 300  # default 5 min
+            for e in entries:
+                bucket = int(e.get('timestamp', 0) // bucket_size) * bucket_size
+                if bucket not in buckets:
+                    buckets[bucket] = {'ts': bucket, 'input': 0, 'output': 0, 'total': 0}
+                buckets[bucket]['input'] += e.get('input', 0)
+                buckets[bucket]['output'] += e.get('output', 0)
+                buckets[bucket]['total'] += e.get('total', 0)
+            
+            if metric == 'tokens_in_total':
+                data = [{'ts': v['ts'], 'value': v['input']} for v in sorted(buckets.values(), key=lambda x: x['ts'])]
+            elif metric == 'tokens_out_total':
+                data = [{'ts': v['ts'], 'value': v['output']} for v in sorted(buckets.values(), key=lambda x: x['ts'])]
+            else:
+                data = [{'ts': v['ts'], 'value': v['total']} for v in sorted(buckets.values(), key=lambda x: x['ts'])]
+            return jsonify({'data': data, 'metric': metric})
+        
+        elif metric == 'cost_total':
+            entries = [e for e in metrics_store.get('cost', [])
+                      if e.get('timestamp', 0) >= from_ts and e.get('timestamp', 0) <= to_ts
+                      and (not node_id or e.get('node_id') == node_id)]
+            buckets = {}
+            bucket_size = int(interval) if interval else 300
+            for e in entries:
+                bucket = int(e.get('timestamp', 0) // bucket_size) * bucket_size
+                if bucket not in buckets:
+                    buckets[bucket] = 0
+                buckets[bucket] += e.get('usd', 0)
+            data = [{'ts': k, 'value': v} for k, v in sorted(buckets.items())]
+            return jsonify({'data': data, 'metric': metric})
+        
+        elif metric == 'sessions_active':
+            entries = [e for e in metrics_store.get('messages', [])
+                      if e.get('timestamp', 0) >= from_ts and e.get('timestamp', 0) <= to_ts
+                      and (not node_id or e.get('node_id') == node_id)
+                      and e.get('outcome') == 'processed']
+            buckets = {}
+            bucket_size = int(interval) if interval else 300
+            for e in entries:
+                bucket = int(e.get('timestamp', 0) // bucket_size) * bucket_size
+                if bucket not in buckets:
+                    buckets[bucket] = 0
+                buckets[bucket] += 1
+            data = [{'ts': k, 'value': v} for k, v in sorted(buckets.items())]
+            return jsonify({'data': data, 'metric': metric})
+    
+    return jsonify({'data': [], 'metric': metric})
 
 
 @bp_history.route('/api/history/metrics/list')
