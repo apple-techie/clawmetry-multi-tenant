@@ -10,7 +10,6 @@ services:
       - "8900:8900"
     env_file:
       - clawmetry.env
-    network_mode: host
     volumes:
       - clawmetry-data:/root/.openclaw
     command: |
