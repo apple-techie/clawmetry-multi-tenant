@@ -10,6 +10,7 @@ services:
       - "8900:8900"
     env_file:
       - clawmetry.env
+    network_mode: host
     volumes:
       - clawmetry-data:/root/.openclaw
     command: |
@@ -27,12 +28,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    networks:
-      - clawmetry-network
 
 volumes:
   clawmetry-data:
-
-networks:
-  clawmetry-network:
-    driver: bridge
