@@ -335,6 +335,82 @@ def _fleet_init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_node_metrics_node_ts
             ON node_metrics(node_id, timestamp DESC);
+        CREATE TABLE IF NOT EXISTS sync_nodes (
+            node_id TEXT PRIMARY KEY,
+            api_key_hash TEXT,
+            machine_id TEXT,
+            hostname TEXT,
+            platform TEXT,
+            version TEXT,
+            connected_at REAL,
+            last_seen_at REAL,
+            status TEXT DEFAULT 'unknown',
+            metadata_json TEXT
+        );
+        CREATE TABLE IF NOT EXISTS ingest_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            session_file TEXT,
+            subagent_id TEXT,
+            encrypted INTEGER DEFAULT 0,
+            blob TEXT,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_events_node_ts
+            ON ingest_events(node_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS ingest_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            log_file TEXT,
+            encrypted INTEGER DEFAULT 0,
+            blob TEXT,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_logs_node_ts
+            ON ingest_logs(node_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS ingest_sessions (
+            node_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            display_name TEXT,
+            status TEXT,
+            model TEXT,
+            total_tokens INTEGER DEFAULT 0,
+            total_cost REAL DEFAULT 0,
+            started_at TEXT,
+            updated_at TEXT,
+            payload_json TEXT,
+            PRIMARY KEY (node_id, session_id)
+        );
+        CREATE TABLE IF NOT EXISTS ingest_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            encrypted INTEGER DEFAULT 0,
+            blob TEXT,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_memory_node_ts
+            ON ingest_memory(node_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS ingest_heartbeats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_heartbeats_node_ts
+            ON ingest_heartbeats(node_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS ingest_stream (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            encrypted INTEGER DEFAULT 0,
+            blob TEXT,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_stream_node_ts
+            ON ingest_stream(node_id, created_at DESC);
     """)
     db.close()
 
@@ -345,6 +421,48 @@ def _fleet_check_key(req):
         return True  # No key configured = open (for dev/testing)
     key = req.headers.get('X-Fleet-Key', '')
     return key == FLEET_API_KEY
+
+
+def _sync_server_key():
+    """API key used by hosted sync/ingest clients."""
+    return os.environ.get('CLAWMETRY_SYNC_API_KEY', '').strip() or FLEET_API_KEY or ''
+
+
+def _hash_api_key(key):
+    import hashlib
+    return hashlib.sha256((key or '').encode()).hexdigest() if key else ''
+
+
+def _sync_check_key(req):
+    expected = _sync_server_key()
+    if not expected:
+        return True
+    key = req.headers.get('X-Api-Key', '').strip()
+    return key == expected
+
+
+def _store_sync_node(node_id, api_key='', machine_id='', hostname='', platform_name='', version='', metadata=None):
+    now = time.time()
+    with _fleet_db_lock:
+        db = _fleet_db()
+        db.execute(
+            """
+            INSERT INTO sync_nodes (node_id, api_key_hash, machine_id, hostname, platform, version, connected_at, last_seen_at, status, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'online', ?)
+            ON CONFLICT(node_id) DO UPDATE SET
+                api_key_hash=excluded.api_key_hash,
+                machine_id=excluded.machine_id,
+                hostname=excluded.hostname,
+                platform=excluded.platform,
+                version=excluded.version,
+                last_seen_at=excluded.last_seen_at,
+                status='online',
+                metadata_json=excluded.metadata_json
+            """,
+            (node_id, _hash_api_key(api_key), machine_id, hostname, platform_name, version, now, now, json.dumps(metadata or {}))
+        )
+        db.commit()
+        db.close()
 
 
 def _fleet_update_statuses():
@@ -5040,6 +5158,82 @@ def _fleet_init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_node_metrics_node_ts
             ON node_metrics(node_id, timestamp DESC);
+        CREATE TABLE IF NOT EXISTS sync_nodes (
+            node_id TEXT PRIMARY KEY,
+            api_key_hash TEXT,
+            machine_id TEXT,
+            hostname TEXT,
+            platform TEXT,
+            version TEXT,
+            connected_at REAL,
+            last_seen_at REAL,
+            status TEXT DEFAULT 'unknown',
+            metadata_json TEXT
+        );
+        CREATE TABLE IF NOT EXISTS ingest_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            session_file TEXT,
+            subagent_id TEXT,
+            encrypted INTEGER DEFAULT 0,
+            blob TEXT,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_events_node_ts
+            ON ingest_events(node_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS ingest_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            log_file TEXT,
+            encrypted INTEGER DEFAULT 0,
+            blob TEXT,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_logs_node_ts
+            ON ingest_logs(node_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS ingest_sessions (
+            node_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            display_name TEXT,
+            status TEXT,
+            model TEXT,
+            total_tokens INTEGER DEFAULT 0,
+            total_cost REAL DEFAULT 0,
+            started_at TEXT,
+            updated_at TEXT,
+            payload_json TEXT,
+            PRIMARY KEY (node_id, session_id)
+        );
+        CREATE TABLE IF NOT EXISTS ingest_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            encrypted INTEGER DEFAULT 0,
+            blob TEXT,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_memory_node_ts
+            ON ingest_memory(node_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS ingest_heartbeats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_heartbeats_node_ts
+            ON ingest_heartbeats(node_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS ingest_stream (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id TEXT NOT NULL,
+            encrypted INTEGER DEFAULT 0,
+            blob TEXT,
+            payload_json TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ingest_stream_node_ts
+            ON ingest_stream(node_id, created_at DESC);
     """)
     db.close()
 
@@ -5050,6 +5244,48 @@ def _fleet_check_key(req):
         return True  # No key configured = open (for dev/testing)
     key = req.headers.get('X-Fleet-Key', '')
     return key == FLEET_API_KEY
+
+
+def _sync_server_key():
+    """API key used by hosted sync/ingest clients."""
+    return os.environ.get('CLAWMETRY_SYNC_API_KEY', '').strip() or FLEET_API_KEY or ''
+
+
+def _hash_api_key(key):
+    import hashlib
+    return hashlib.sha256((key or '').encode()).hexdigest() if key else ''
+
+
+def _sync_check_key(req):
+    expected = _sync_server_key()
+    if not expected:
+        return True
+    key = req.headers.get('X-Api-Key', '').strip()
+    return key == expected
+
+
+def _store_sync_node(node_id, api_key='', machine_id='', hostname='', platform_name='', version='', metadata=None):
+    now = time.time()
+    with _fleet_db_lock:
+        db = _fleet_db()
+        db.execute(
+            """
+            INSERT INTO sync_nodes (node_id, api_key_hash, machine_id, hostname, platform, version, connected_at, last_seen_at, status, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'online', ?)
+            ON CONFLICT(node_id) DO UPDATE SET
+                api_key_hash=excluded.api_key_hash,
+                machine_id=excluded.machine_id,
+                hostname=excluded.hostname,
+                platform=excluded.platform,
+                version=excluded.version,
+                last_seen_at=excluded.last_seen_at,
+                status='online',
+                metadata_json=excluded.metadata_json
+            """,
+            (node_id, _hash_api_key(api_key), machine_id, hostname, platform_name, version, now, now, json.dumps(metadata or {}))
+        )
+        db.commit()
+        db.close()
 
 
 def _fleet_update_statuses():
@@ -10134,7 +10370,7 @@ async function viewFile(path) {
   content.textContent = 'Loading...';
   viewer.style.display = 'block';
   try {
-    var data = await fetch('/api/file?path=' + encodeURIComponent(path)).then(r => r.json());
+    var data = await fetch('/api/file?path=' + encodeURIComponent(path) + (selectedNodeId ? '&node_id=' + encodeURIComponent(selectedNodeId) : '')).then(r => r.json());
     if (data.error) { content.textContent = 'Error: ' + data.error; return; }
     content.textContent = data.content;
   } catch(e) {
@@ -10685,7 +10921,7 @@ async function loadMemory() {
     return;
   }
   loadMemoryAnalytics();
-  var data = await fetch('/api/memory-files').then(r => r.json());
+  var data = await fetch('/api/memory-files' + (selectedNodeId ? '?node_id=' + encodeURIComponent(selectedNodeId) : '')).then(r => r.json());
   var el = document.getElementById('memory-list');
   // Add hover CSS once
   if (!document.getElementById('mem-ide-css')) {
@@ -10748,7 +10984,7 @@ async function loadMemory() {
         '<span style="margin-left:auto;font-size:10px;color:var(--text-muted)">Loading...</span></div>' +
         '<pre style="margin:0;padding:16px;font-family:monospace;font-size:12px;line-height:1.6;color:var(--text-secondary);white-space:pre-wrap;word-break:break-word">Loading...</pre>';
       try {
-        var d = await fetch('/api/file?path=' + encodeURIComponent(p)).then(function(r) { return r.json(); });
+        var d = await fetch('/api/file?path=' + encodeURIComponent(p) + (selectedNodeId ? '&node_id=' + encodeURIComponent(selectedNodeId) : '')).then(function(r) { return r.json(); });
         if (d.error) { viewer.querySelector('pre').textContent = 'Error: ' + d.error; return; }
         var content = d.content || '';
         viewer.innerHTML = '<div style="padding:8px 16px;border-bottom:1px solid var(--border-primary);display:flex;align-items:center;gap:8px;background:var(--bg-secondary);position:sticky;top:0;z-index:1">' +
@@ -11216,7 +11452,7 @@ function exportUsageData() {
 // ===== Transcripts =====
 async function loadTranscripts() {
   try {
-    var data = await fetch('/api/transcripts').then(r => r.json());
+    var data = await fetch('/api/transcripts' + (selectedNodeId ? '?node_id=' + encodeURIComponent(selectedNodeId) : '')).then(r => r.json());
     var html = '';
     data.transcripts.forEach(function(t) {
       html += '<div class="transcript-item" onclick="viewTranscript(\'' + escHtml(t.id) + '\')">';
@@ -11250,7 +11486,7 @@ async function viewTranscript(sessionId) {
   document.getElementById('transcript-back-btn').style.display = '';
   document.getElementById('transcript-messages').innerHTML = '<div style="padding:20px;color:#666;">Loading transcript...</div>';
   try {
-    var data = await fetch('/api/transcript/' + encodeURIComponent(sessionId)).then(r => r.json());
+    var data = await fetch('/api/transcript/' + encodeURIComponent(sessionId) + (selectedNodeId ? '?node_id=' + encodeURIComponent(selectedNodeId) : '')).then(r => r.json());
     // Metadata
     var metaHtml = '<div class="stat-row"><span class="stat-label">Session</span><span class="stat-val">' + escHtml(data.name) + '</span></div>';
     metaHtml += '<div class="stat-row"><span class="stat-label">Messages</span><span class="stat-val">' + data.messageCount + '</span></div>';
@@ -15366,6 +15602,8 @@ def _check_auth():
         return  # Auth check endpoint is always accessible
     if request.path == '/api/gw/config':
         return  # Gateway setup must work before auth is configured
+    if request.path == '/auth' or request.path.startswith('/ingest/') or request.path == '/api/ingest':
+        return  # Hosted sync/ingest endpoints use X-Api-Key auth
     if request.path.startswith('/api/nodes'):
         return  # Fleet API uses its own X-Fleet-Key authentication
     if not request.path.startswith('/api/'):
@@ -15406,6 +15644,310 @@ def index():
     resp = make_response(render_template_string(DASHBOARD_HTML, version=__version__))
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return resp
+
+
+@bp_auth.route('/auth', methods=['POST'])
+def api_sync_auth():
+    """Hosted sync auth endpoint used by clawmetry.sync validate_key()."""
+    data = request.get_json(silent=True) or {}
+    api_key = (request.headers.get('X-Api-Key', '') or data.get('api_key', '')).strip()
+    if not api_key or not _sync_check_key(request if request.headers.get('X-Api-Key') else type('Obj', (), {'headers': {'X-Api-Key': api_key}})()):
+        if _sync_server_key():
+            return jsonify({'error': 'Invalid API key'}), 401
+    node_id = (data.get('existing_node_id') or data.get('hostname') or data.get('node_id') or 'unknown').strip()
+    machine_id = (data.get('machine_id') or '').strip()
+    hostname = (data.get('hostname') or node_id).strip()
+    _store_sync_node(node_id, api_key=api_key, machine_id=machine_id, hostname=hostname, metadata=data)
+    return jsonify({'ok': True, 'node_id': node_id})
+
+
+def _ingest_json(req):
+    return req.get_json(silent=True) or {}
+
+
+def _ingest_store(table, node_id, payload, encrypted=False, blob=None, **extra):
+    cols = ['node_id', 'encrypted', 'blob', 'payload_json', 'created_at']
+    vals = [node_id, 1 if encrypted else 0, blob, json.dumps(payload) if payload is not None else None, time.time()]
+    for k, v in extra.items():
+        cols.insert(-1, k)
+        vals.insert(-1, v)
+    placeholders = ', '.join(['?'] * len(cols))
+    with _fleet_db_lock:
+        db = _fleet_db()
+        db.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders})", vals)
+        db.commit()
+        db.close()
+
+
+def _sync_ingest_ok(req):
+    if not _sync_check_key(req):
+        return False, (jsonify({'error': 'Invalid or missing X-Api-Key'}), 401)
+    return True, None
+
+
+
+def _get_ingest_sessions(node_id):
+    with _fleet_db_lock:
+        db = _fleet_db()
+        rows = db.execute(
+            "SELECT * FROM ingest_sessions WHERE node_id = ? ORDER BY COALESCE(updated_at, started_at, '') DESC",
+            (node_id,)
+        ).fetchall()
+        db.close()
+    return [dict(r) for r in rows]
+
+
+def _get_latest_ingest_logs(node_id, lines_count=100):
+    with _fleet_db_lock:
+        db = _fleet_db()
+        rows = db.execute(
+            "SELECT payload_json FROM ingest_logs WHERE node_id = ? AND encrypted = 0 ORDER BY created_at DESC LIMIT 10",
+            (node_id,)
+        ).fetchall()
+        db.close()
+    lines = []
+    for row in reversed(rows):
+        try:
+            payload = json.loads(row['payload_json'] or '{}')
+            for entry in payload.get('lines', []) or []:
+                lines.append(json.dumps(entry) if isinstance(entry, dict) else str(entry))
+        except Exception:
+            pass
+    return lines[-lines_count:]
+
+
+def _get_latest_ingest_memory(node_id):
+    with _fleet_db_lock:
+        db = _fleet_db()
+        row = db.execute(
+            "SELECT payload_json FROM ingest_memory WHERE node_id = ? AND encrypted = 0 ORDER BY created_at DESC LIMIT 1",
+            (node_id,)
+        ).fetchone()
+        db.close()
+    if not row:
+        return None
+    try:
+        return json.loads(row['payload_json'] or '{}')
+    except Exception:
+        return None
+
+
+def _get_ingest_transcript_list(node_id):
+    with _fleet_db_lock:
+        db = _fleet_db()
+        rows = db.execute(
+            "SELECT session_file, MAX(created_at) AS modified, COUNT(*) AS chunks FROM ingest_events WHERE node_id = ? AND encrypted = 0 AND session_file IS NOT NULL GROUP BY session_file ORDER BY modified DESC",
+            (node_id,)
+        ).fetchall()
+        db.close()
+    transcripts = []
+    for row in rows:
+        sid = (row['session_file'] or '').replace('.jsonl', '')
+        if sid:
+            transcripts.append({'id': sid, 'name': sid[:40], 'messages': int(row['chunks'] or 0), 'size': 0, 'modified': int((row['modified'] or 0) * 1000)})
+    return transcripts[:50]
+
+
+def _get_ingest_transcript(node_id, session_id):
+    fname = session_id if session_id.endswith('.jsonl') else (session_id + '.jsonl')
+    with _fleet_db_lock:
+        db = _fleet_db()
+        rows = db.execute(
+            "SELECT payload_json FROM ingest_events WHERE node_id = ? AND encrypted = 0 AND session_file = ? ORDER BY created_at ASC",
+            (node_id, fname)
+        ).fetchall()
+        db.close()
+    events = []
+    for row in rows:
+        try:
+            payload = json.loads(row['payload_json'] or '{}')
+            events.extend(payload.get('events', []) or [])
+        except Exception:
+            pass
+    if not events:
+        return None
+    messages = []
+    model = None
+    total_tokens = 0
+    first_ts = None
+    last_ts = None
+    for obj in events:
+        try:
+            ts = obj.get('timestamp') or obj.get('time') or obj.get('created_at')
+            ts_ms = None
+            if ts:
+                if isinstance(ts, (int, float)):
+                    ts_ms = int(ts * 1000) if ts < 1e12 else int(ts)
+                else:
+                    try:
+                        ts_ms = int(datetime.fromisoformat(str(ts).replace('Z', '+00:00')).timestamp() * 1000)
+                    except Exception:
+                        ts_ms = None
+            if ts_ms:
+                first_ts = ts_ms if first_ts is None else min(first_ts, ts_ms)
+                last_ts = ts_ms if last_ts is None else max(last_ts, ts_ms)
+            msg = obj.get('message', obj if obj.get('role') else {})
+            role = msg.get('role', obj.get('role', obj.get('type', 'unknown')))
+            content = msg.get('content', obj.get('content', ''))
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get('type') == 'text':
+                            parts.append(part.get('text', ''))
+                        elif part.get('type') == 'thinking':
+                            parts.append(part.get('thinking', ''))
+                        else:
+                            parts.append(str(part))
+                    else:
+                        parts.append(str(part))
+                content = '\n'.join([p for p in parts if p])
+            elif not isinstance(content, str):
+                content = str(content) if content else ''
+            usage = msg.get('usage', obj.get('usage', {}))
+            if isinstance(usage, dict):
+                total_tokens += usage.get('totalTokens', 0) or usage.get('total_tokens', 0) or 0
+            if not model:
+                model = msg.get('model') or obj.get('model')
+            if content or role in ('user', 'assistant', 'system', 'tool'):
+                messages.append({'role': role, 'content': content, 'timestamp': ts_ms})
+        except Exception:
+            continue
+    duration = None
+    if first_ts and last_ts and last_ts > first_ts:
+        dur_sec = (last_ts - first_ts) / 1000
+        duration = f"{dur_sec/60:.0f}m" if dur_sec >= 60 else f"{dur_sec:.0f}s"
+    return {'name': session_id[:40], 'messageCount': len(messages), 'model': model, 'totalTokens': total_tokens, 'duration': duration, 'messages': messages[:500]}
+
+
+@bp_gateway.route('/api/ingest', methods=['POST'])
+def api_sync_ingest_events_compat():
+    ok, err = _sync_ingest_ok(request)
+    if not ok:
+        return err
+    data = _ingest_json(request)
+    node_id = (data.get('node_id') or request.headers.get('X-Node-Id', '')).strip()
+    if not node_id:
+        return jsonify({'error': 'node_id is required'}), 400
+    _store_sync_node(node_id, api_key=request.headers.get('X-Api-Key', ''), metadata={'source': 'api_ingest'})
+    _ingest_store('ingest_events', node_id, data, session_file=data.get('session_file'), subagent_id=data.get('subagent_id'))
+    return jsonify({'ok': True})
+
+
+@bp_gateway.route('/ingest/events', methods=['POST'])
+def api_ingest_events():
+    ok, err = _sync_ingest_ok(request)
+    if not ok:
+        return err
+    data = _ingest_json(request)
+    node_id = (data.get('node_id') or request.headers.get('X-Node-Id', '')).strip()
+    if not node_id:
+        return jsonify({'error': 'node_id is required'}), 400
+    encrypted = bool(data.get('encrypted'))
+    _store_sync_node(node_id, api_key=request.headers.get('X-Api-Key', ''), metadata={'source': 'events'})
+    _ingest_store('ingest_events', node_id, None if encrypted else data, encrypted=encrypted, blob=data.get('blob'), session_file=data.get('session_file'), subagent_id=data.get('subagent_id'))
+    return jsonify({'ok': True})
+
+
+@bp_gateway.route('/ingest/logs', methods=['POST'])
+def api_ingest_logs():
+    ok, err = _sync_ingest_ok(request)
+    if not ok:
+        return err
+    data = _ingest_json(request)
+    node_id = (data.get('node_id') or request.headers.get('X-Node-Id', '')).strip()
+    if not node_id:
+        return jsonify({'error': 'node_id is required'}), 400
+    encrypted = bool(data.get('encrypted'))
+    _store_sync_node(node_id, api_key=request.headers.get('X-Api-Key', ''), metadata={'source': 'logs'})
+    _ingest_store('ingest_logs', node_id, None if encrypted else data, encrypted=encrypted, blob=data.get('blob'), log_file=data.get('log_file'))
+    return jsonify({'ok': True})
+
+
+@bp_gateway.route('/ingest/heartbeat', methods=['POST'])
+def api_ingest_heartbeat():
+    ok, err = _sync_ingest_ok(request)
+    if not ok:
+        return err
+    data = _ingest_json(request)
+    node_id = (data.get('node_id') or request.headers.get('X-Node-Id', '')).strip()
+    if not node_id:
+        return jsonify({'error': 'node_id is required'}), 400
+    _store_sync_node(node_id, api_key=request.headers.get('X-Api-Key', ''), hostname=data.get('hostname',''), platform_name=data.get('platform',''), version=data.get('version',''), metadata=data)
+    with _fleet_db_lock:
+        db = _fleet_db()
+        db.execute("INSERT INTO ingest_heartbeats (node_id, payload_json, created_at) VALUES (?, ?, ?)", (node_id, json.dumps(data), time.time()))
+        db.commit()
+        db.close()
+    return jsonify({'ok': True})
+
+
+@bp_gateway.route('/ingest/sessions', methods=['POST'])
+def api_ingest_sessions():
+    ok, err = _sync_ingest_ok(request)
+    if not ok:
+        return err
+    data = _ingest_json(request)
+    node_id = (data.get('node_id') or request.headers.get('X-Node-Id', '')).strip()
+    if not node_id:
+        return jsonify({'error': 'node_id is required'}), 400
+    _store_sync_node(node_id, api_key=request.headers.get('X-Api-Key', ''), metadata={'source': 'sessions'})
+    sessions = data.get('sessions', []) or []
+    with _fleet_db_lock:
+        db = _fleet_db()
+        for s in sessions:
+            sid = (s.get('session_id') or '').strip()
+            if not sid:
+                continue
+            db.execute(
+                """
+                INSERT INTO ingest_sessions (node_id, session_id, display_name, status, model, total_tokens, total_cost, started_at, updated_at, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(node_id, session_id) DO UPDATE SET
+                    display_name=excluded.display_name,
+                    status=excluded.status,
+                    model=excluded.model,
+                    total_tokens=excluded.total_tokens,
+                    total_cost=excluded.total_cost,
+                    started_at=excluded.started_at,
+                    updated_at=excluded.updated_at,
+                    payload_json=excluded.payload_json
+                """,
+                (node_id, sid, s.get('display_name'), s.get('status'), s.get('model'), s.get('total_tokens', 0), s.get('total_cost', 0), s.get('started_at'), s.get('updated_at'), json.dumps(s))
+            )
+        db.commit()
+        db.close()
+    return jsonify({'ok': True, 'count': len(sessions)})
+
+
+@bp_gateway.route('/ingest/memory', methods=['POST'])
+def api_ingest_memory():
+    ok, err = _sync_ingest_ok(request)
+    if not ok:
+        return err
+    data = _ingest_json(request)
+    node_id = (data.get('node_id') or request.headers.get('X-Node-Id', '')).strip()
+    if not node_id:
+        return jsonify({'error': 'node_id is required'}), 400
+    encrypted = bool(data.get('encrypted'))
+    _store_sync_node(node_id, api_key=request.headers.get('X-Api-Key', ''), metadata={'source': 'memory'})
+    _ingest_store('ingest_memory', node_id, None if encrypted else data, encrypted=encrypted, blob=data.get('blob'))
+    return jsonify({'ok': True})
+
+
+@bp_gateway.route('/ingest/stream', methods=['POST'])
+def api_ingest_stream():
+    ok, err = _sync_ingest_ok(request)
+    if not ok:
+        return err
+    data = _ingest_json(request)
+    node_id = (data.get('node_id') or request.headers.get('X-Node-Id', '')).strip()
+    if not node_id:
+        return jsonify({'error': 'node_id is required'}), 400
+    encrypted = bool(data.get('encrypted'))
+    _store_sync_node(node_id, api_key=request.headers.get('X-Api-Key', ''), metadata={'source': 'stream'})
+    _ingest_store('ingest_stream', node_id, None if encrypted else data, encrypted=encrypted, blob=data.get('blob'))
+    return jsonify({'ok': True})
 
 
 @bp_overview.route('/api/channels')
@@ -15511,6 +16053,29 @@ def api_channels():
 
 @bp_overview.route('/api/overview')
 def api_overview():
+    node_id = request.args.get('node_id', '').strip()
+    if node_id:
+        ingest_sessions = _get_ingest_sessions(node_id)
+        if ingest_sessions:
+            total_tokens = sum(int(s.get('total_tokens') or 0) for s in ingest_sessions)
+            latest = ingest_sessions[0]
+            mem = _get_latest_ingest_memory(node_id) or {}
+            mem_files = ((mem.get('memory_state') or {}).get('files') or [])
+            return jsonify({
+                'model': latest.get('model') or 'unknown',
+                'provider': _infer_provider_from_model(latest.get('model') or 'unknown'),
+                'sessionCount': len(ingest_sessions),
+                'mainSessionUpdated': latest.get('updated_at'),
+                'mainTokens': total_tokens,
+                'contextWindow': 200000,
+                'cronCount': 0,
+                'cronEnabled': 0,
+                'cronDisabled': 0,
+                'memoryCount': len(mem_files),
+                'memorySize': sum(int(f.get('size') or 0) for f in mem_files),
+                'system': [['Gateway', 'Remote Sync', 'green']],
+                'infra': {'userName': USER_NAME, 'network': node_id, 'machine': node_id, 'runtime': 'Hosted Sync', 'storage': 'Remote'},
+            })
     # Try gateway API for sessions
     gw_sessions = _gw_invoke('sessions_list', {'limit': 50, 'messageLimit': 0})
     if gw_sessions and 'sessions' in gw_sessions:
@@ -15719,6 +16284,12 @@ def api_main_activity():
 
 @bp_sessions.route('/api/sessions')
 def api_sessions():
+    node_id = request.args.get('node_id', '').strip()
+    if node_id:
+        rows = _get_ingest_sessions(node_id)
+        if rows:
+            sessions = [{'sessionId': r.get('session_id'), 'displayName': r.get('display_name') or r.get('session_id'), 'updatedAt': r.get('updated_at'), 'totalTokens': r.get('total_tokens', 0), 'model': r.get('model') or 'unknown', 'key': r.get('session_id')} for r in rows]
+            return jsonify({'sessions': sessions})
     gw_data = _gw_invoke('sessions_list', {'limit': 50, 'messageLimit': 0})
     if gw_data and 'sessions' in gw_data:
         return jsonify({'sessions': gw_data['sessions']})
@@ -15970,6 +16541,11 @@ def cloud_cta_verify_otp():
 @bp_logs.route('/api/logs')
 def api_logs():
     lines_count = int(request.args.get('lines', 100))
+    node_id = request.args.get('node_id', '').strip()
+    if node_id:
+        remote_lines = _get_latest_ingest_logs(node_id, lines_count)
+        if remote_lines:
+            return jsonify({'lines': remote_lines, 'date': request.args.get('date', datetime.now().strftime('%Y-%m-%d'))})
     date_str = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
     hour_start = request.args.get('hour_start', None)
     hour_end = request.args.get('hour_end', None)
@@ -16748,13 +17324,25 @@ def api_logs_stream():
 
 @bp_memory.route('/api/memory-files')
 def api_memory_files():
+    node_id = request.args.get('node_id', '').strip()
+    if node_id:
+        mem = _get_latest_ingest_memory(node_id) or {}
+        files = ((mem.get('memory_state') or {}).get('files') or [])
+        if files:
+            return jsonify([{'path': f.get('name'), 'size': int(f.get('size') or 0)} for f in files])
     return jsonify(_get_memory_files())
 
 
 @bp_memory.route('/api/file')
 def api_view_file():
     """Return the contents of a memory file."""
+    node_id = request.args.get('node_id', '').strip()
     path = request.args.get('path', '')
+    if node_id:
+        mem = _get_latest_ingest_memory(node_id) or {}
+        for item in (mem.get('memory_content') or []):
+            if item.get('path') == path:
+                return jsonify({'path': path, 'content': item.get('content', '')})
     full = os.path.normpath(os.path.join(WORKSPACE, path))
     if not full.startswith(os.path.normpath(WORKSPACE)):
         return jsonify({'error': 'Access denied'}), 403
@@ -18082,6 +18670,11 @@ def api_usage_export():
 @bp_sessions.route('/api/transcripts')
 def api_transcripts():
     """List available session transcript .jsonl files."""
+    node_id = request.args.get('node_id', '').strip()
+    if node_id:
+        remote = _get_ingest_transcript_list(node_id)
+        if remote:
+            return jsonify({'transcripts': remote})
     sessions_dir = SESSIONS_DIR or os.path.expanduser('~/.openclaw/agents/main/sessions')
     transcripts = []
     if os.path.isdir(sessions_dir):
@@ -18109,6 +18702,11 @@ def api_transcripts():
 @bp_sessions.route('/api/transcript/<session_id>')
 def api_transcript(session_id):
     """Parse and return a session transcript for the chat viewer."""
+    node_id = request.args.get('node_id', '').strip()
+    if node_id:
+        remote = _get_ingest_transcript(node_id, session_id)
+        if remote:
+            return jsonify(remote)
     sessions_dir = SESSIONS_DIR or os.path.expanduser('~/.openclaw/agents/main/sessions')
     fpath = os.path.join(sessions_dir, session_id + '.jsonl')
     # Sanitize path
